@@ -16,15 +16,17 @@ static void handle_sigint(int signo)
 
 static char *ethtype_to_proto(__u16 ethtype)
 {
+	// the constants are defined in <linux/if_ether.h>
 	switch (ethtype) {
-		case ETH_P_IP: return "IPv4";
-		case ETH_P_ARP: return "ARP";
-		case ETH_P_IPV6: return "IPv6";
+		case ETH_P_IP: return "IPv4";	// ETH_P_IP = 0x0800
+		case ETH_P_ARP: return "ARP";	// ETH_P_ARP = 0x0806
+		case ETH_P_IPV6: return "IPv6";	// ETH_P_IPV6 = 0x86DD
 		default: return "Unknown";
 	}
 }
 
 /* Scans all the entries in the given eBPF map and prints their value */
+/* for each key, value entry in map, print the specific data requested (here we can customize answer to the user)*/
 static int dump_l3protos_map(struct bpf_map *map)
 {
 	int err;
@@ -33,18 +35,21 @@ static int dump_l3protos_map(struct bpf_map *map)
 	/* This libbpf helper allows to iterate over all keys of an eBPF map.
 	 * Refer to its definition in libbpf.h for more details on how it works
 	 */
+	// here we obtain the key
 	err = bpf_map__get_next_key(map, NULL, &key, sizeof(key));
 	while (!err) {
 		struct l3proto_stats val;
-		if (bpf_map__lookup_elem(map, &key, sizeof(key), &val,
-					 sizeof(val), 0)) {
-			fprintf(stderr, "Error reading key 0x%04x from map: "
-				"%s\n", key, strerror(errno));
+		// Perform a lookup in map for an entry associated to key.
+		// Return Map value associated to key, or NULL if no entry was found.
+		if (bpf_map__lookup_elem(map, &key, sizeof(key), &val, sizeof(val), 0)) {
+			fprintf(stderr, "Error reading key 0x%04x from map: " "%s\n", key, strerror(errno));
 			return -1;
 		}
-
+		// bpf_ntohs(key) swaps the two bytes 0x0008 -> 0x0800
 		printf("Proto %s: %lu pkts, %lu bytes\n",
-		       ethtype_to_proto(bpf_ntohs(key)), val.pkts, val.bytes);
+			ethtype_to_proto(bpf_ntohs(key)),	// %s -> "IPv4", "ARP", "IPv6" or "Uknown"
+			val.pkts,	// %lu -> packet counter read from the map
+			val.bytes);	// %lu -> byte counter read from the map
 
 		err = bpf_map__get_next_key(map, &key, &key, sizeof(key));
 	}
@@ -84,10 +89,8 @@ int main(int argc, char **argv)
 	 * and tc_hook_egress and fields zeroed or initilized with the values we
 	 * provide
 	 */
-	LIBBPF_OPTS(bpf_tc_hook, tc_hook_ingress, .ifindex = ifindex,
-		    .attach_point = BPF_TC_INGRESS);
-	LIBBPF_OPTS(bpf_tc_hook, tc_hook_egress, .ifindex = ifindex,
-		    .attach_point = BPF_TC_EGRESS);
+	LIBBPF_OPTS(bpf_tc_hook, tc_hook_ingress, .ifindex = ifindex, .attach_point = BPF_TC_INGRESS);
+	LIBBPF_OPTS(bpf_tc_hook, tc_hook_egress, .ifindex = ifindex, .attach_point = BPF_TC_EGRESS);
 
 	/* The next function creates the hook point. TC hook points correspond
 	 * to the clsact qdisc (Classify Action Queuing Discipline) of the TC
@@ -96,8 +99,7 @@ int main(int argc, char **argv)
 	 */
 	int err = bpf_tc_hook_create(&tc_hook_ingress);
 	if (err && err != -EEXIST) {
-		fprintf(stderr, "Failed to create TC hook: %s\n",
-			strerror(errno));
+		fprintf(stderr, "Failed to create TC hook: %s\n", strerror(errno));
 		goto cleanup;
 	}
 
@@ -107,28 +109,23 @@ int main(int argc, char **argv)
 	 * of execution in case there are multiple filters attached to the same
 	 * side
 	 */
-	LIBBPF_OPTS(bpf_tc_opts, tc_opts_ingress, .handle = 1, .priority = 1,
-		    .prog_fd = bpf_program__fd(skel->progs.tc_prog));
+	LIBBPF_OPTS(bpf_tc_opts, tc_opts_ingress, .handle = 1, .priority = 1, .prog_fd = bpf_program__fd(skel->progs.tc_prog));
 	err = bpf_tc_attach(&tc_hook_ingress, &tc_opts_ingress);
 	if (err) {
-		fprintf(stderr, "Failed to attach TC ingress: %s\n",
-			strerror(errno));
+		fprintf(stderr, "Failed to attach TC ingress: %s\n", strerror(errno));
 		goto cleanup;
 	}
 
 	/* Attach the eBPF program to the TC egress hook */
-	LIBBPF_OPTS(bpf_tc_opts, tc_opts_egress, .handle = 2, .priority = 1,
-		    .prog_fd = bpf_program__fd(skel->progs.tc_prog));
+	LIBBPF_OPTS(bpf_tc_opts, tc_opts_egress, .handle = 2, .priority = 1, .prog_fd = bpf_program__fd(skel->progs.tc_prog));
 	err = bpf_tc_attach(&tc_hook_egress, &tc_opts_egress);
 	if (err) {
-		fprintf(stderr, "Failed to attach TC egress: %s\n",
-			strerror(errno));
+		fprintf(stderr, "Failed to attach TC egress: %s\n", strerror(errno));
 		goto cleanup;
 	}
 
 	if (signal(SIGINT, handle_sigint)) {
-		fprintf(stderr, "Error setting signal handler: %s\n",
-			strerror(errno));
+		fprintf(stderr, "Error setting signal handler: %s\n", strerror(errno));
 		goto cleanup;
 	}
 

@@ -77,8 +77,11 @@ int tc_prog(struct __sk_buff *ctx)
 		 * use the BPF_NOEXIST flag, that adds the entry only if it
 		 * doesn't already exist
 		 */
-		int rc = bpf_map_update_elem(&l3protos_stats, &eth->h_proto,
-					     &new_val, BPF_NOEXIST);
+
+		// Add or update the value of the entry associated to key in map with value. flags is one of:
+		// map_update(*map, *key, *value, flags)
+		// return 0 in case success, negative error in case of failure
+		int rc = bpf_map_update_elem(&l3protos_stats, &eth->h_proto, &new_val, BPF_NOEXIST);	
 		if (rc != 0 && rc != -EEXIST) {
 			/* The update failed (rc != 0), and it's not beacuse the
 			 * entry already existed (rc != -EEXIST). The map is
